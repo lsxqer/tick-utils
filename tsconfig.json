@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "declaration": true,
+    "target": "ESNext",
+    "declarationDir": "./out/@types",
+    "outDir": "./out",
+    "typeRoots": [
+      "typedef.d.ts" 
+    ]
+  },
+  "include": [
+   "src/*.ts",
+   "typedef.d.ts" 
+  ]
+}
