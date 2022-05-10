@@ -4,13 +4,9 @@
     "declaration": true,
     "target": "ESNext",
     "declarationDir": "./out/@types",
-    "outDir": "./out",
-    "typeRoots": [
-      "typedef.d.ts" 
-    ]
+    "outDir": "./out"
   },
   "include": [
-   "src/*.ts",
-   "typedef.d.ts" 
+    "src/*.ts"
   ]
 }

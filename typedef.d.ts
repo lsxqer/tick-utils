@@ -1,7 +1,6 @@
 
 
-// @ts-ignore
-export * from "./out/@types";
+export * from "./out/@types/mian";
 
 declare module "next-tick" {
 }

@@ -12,3 +12,6 @@ export const callbackQueue: Queue = {
   nextCallbackQueue: [],
   processCallbackQueue: []
 };
+
+// 使用链表来做
+// 支持ms
