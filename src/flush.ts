@@ -2,7 +2,8 @@ import { pauseExecutionCallback } from "./batching";
 import { requestNextLoopExecutionCallback } from "./nextLoop";
 import { callbackQueue } from "./queue";
 
-export function flushNextPendingExecutionCallbackQueue() {
+
+export function flushCurrentCallback() {
 
   let currentCallbackQueue = callbackQueue.nextCallbackQueue;
   callbackQueue.nextCallbackQueue = callbackQueue.processCallbackQueue;
@@ -12,9 +13,13 @@ export function flushNextPendingExecutionCallbackQueue() {
     callback();
   }
 
-  // 交替执行
   callbackQueue.processCallbackQueue = currentCallbackQueue;
+}
 
+export function nextLoopFlushCallbackQueue() {
+
+  flushCurrentCallback();
+  
   // 队列不为空， 我希望在下一轮循环中执行他们
   if (callbackQueue.nextCallbackQueue.length > 0) {
     requestNextLoopExecutionCallback();

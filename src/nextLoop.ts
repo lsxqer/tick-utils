@@ -1,9 +1,9 @@
-import { flushNextPendingExecutionCallbackQueue } from "./flush";
+import { nextLoopFlushCallbackQueue } from "./flush";
 import { pauseExecutionCallback } from "./batching";
 
 const channel = new MessageChannel();
 
-channel.port1.onmessage = flushNextPendingExecutionCallbackQueue;
+channel.port1.onmessage = nextLoopFlushCallbackQueue;
 channel.port2.onmessage = pauseExecutionCallback;
 
 export function requestNextLoopExecutionCallback() {
