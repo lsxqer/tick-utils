@@ -11,7 +11,6 @@ type SingleListener = (...args: any[]) => void;
  */
 export class SingleEvent {
   private listeners: SingleListener[] = [];
-  private pendingListeners: SingleListener[] = null!;
 
   /**
    * 添加一个监听器
@@ -24,10 +23,6 @@ export class SingleEvent {
     }
 
     const unSubscribe = () => {
-      if (this.pendingListeners !== null) {
-        this.pendingListeners.push(listener);
-        return;
-      }
       let idx = this.listeners.indexOf(listener);
       if (idx > -1) {
         this.listeners.splice(idx, 1);
@@ -42,18 +37,11 @@ export class SingleEvent {
    * @param args 需要使用的消息
    */
   publish(...args: any[]) {
-    let pending = this.pendingListeners = [];
-
-    for (let listener of this.listeners) {
+    let subscriptions = this.listeners.slice();
+    for (let listener of subscriptions) {
       listener(...args);
     }
-
-    let i = pending.length;
-    while (i >= 0) {
-      this.listeners.splice(this.listeners.indexOf(pending[i--]!), 1);
-    }
-
-    pending = this.pendingListeners = null!;
+    subscriptions.length = 0;
   }
 
 }
