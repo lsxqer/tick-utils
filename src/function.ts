@@ -1,31 +1,18 @@
-import { toJsUrl } from "./toJsUrl";
-import { executeInWorker } from "./work";
+import { buildExecutableFunctionToString, toJsUrl } from "./to";
+import { executeInWorker } from "./worker";
 
 export type RunCallback = (
-  resolve: (argv: any) => void,
+  resolve: (argv?: any) => void,
   reject: (reson: any) => void
 ) => any;
 
 
-export function buildExecutableFunction<T extends (...args: any) => any = RunCallback>(
-  callback: T,
-  functionName: string,
-  executable = true
-) {
-
-  if (callback.name === "") {
-    if (executable) {
-      return `const ${functionName} = ${callback.toString()};\r\n\r\n ${functionName}(resolve, reject);`;
-    }
-    return `const ${functionName} = ${callback.toString()};\r\n\r\n`;
-  }
-  if (executable) {
-    return callback.toString() + `;`
-  }
-  return callback.toString() + `;${callback.name}(resolve, reject);`
-}
-
-export function asyncRunCallback(callback: RunCallback) {
+/**
+ * 异步执行一个函数
+ * @param callback - 被执行的函数
+ * @returns 返回callback传递的参数
+ */
+export function asyncRunCallback<T = any>(callback: RunCallback) {
 
   let rawFunction = `
     const resolve = (argv) => {
@@ -35,19 +22,24 @@ export function asyncRunCallback(callback: RunCallback) {
       throw new Error(res);
     };
   
-  `+ buildExecutableFunction(callback, "a");
+  `+ buildExecutableFunctionToString(callback, "func");
 
   let jsUrl = toJsUrl(rawFunction);
 
-  return executeInWorker(jsUrl);
+  return executeInWorker<T>(jsUrl);
 }
 
+/**
+ * 同步执行
+ * @param callback - 被执行的函数
+ * @returns 返回callback传递的参数
+ */
 export function runCallback(callback: RunCallback) {
   return new Promise((resolve, reject) => {
 
     let fn = Function(
       `resolve, reject`,
-      buildExecutableFunction(callback, "func")
+      buildExecutableFunctionToString(callback, "func")
     );
 
     return fn(resolve, reject);

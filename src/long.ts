@@ -1,7 +1,10 @@
-import { buildExecutableFunction } from "./function";
-import { toJsUrl } from "./toJsUrl";
-import { createWorker } from "./work";
 
+import { buildExecutableFunctionToString, toJsUrl } from "./to";
+import { createWorker } from "./worker";
+
+
+
+type LastTypes<T> = T extends [any, (...args: any[]) => void, ...infer P] ? P : T extends [any, ...infer P] ? P : never;
 
 interface WorkInstance<T extends any[]> {
   /** 开始执行这个任务 */
@@ -15,22 +18,69 @@ interface WorkInstance<T extends any[]> {
   /** 是否执行中  */
   executing: boolean;
 }
-type LastTypes<T> = T extends [any, any, ...infer P] ? P : never;
 
 
-export function runingCallbackForLong<T extends (wait: () => boolean, ...args: any) => any = (wait: () => boolean, ...args: any) => any>(callback: T): WorkInstance<LastTypes<Parameters<T>>> {
-
+/**
+ * 
+ * @param callback - 被执行的函数
+ * @param staticState - 可选的参数，会保存在函数之外，可被json序列化的参数
+ * @returns WorkInstance 类型
+ * 
+ * @example
+ * const inst = runTaskInWorker(
+ *    async (wait,state, a: string) => {
+ *      while (!(await wait())) {
+ *        console.log("runTaskInWorker",state, a);
+ *      }
+ *    },
+ *  {count: 1}
+ *  );
+ *
+ *  inst.startup("abc");
+ *
+ *  setTimeout(() => {
+ *    inst.stop();
+ *    setTimeout(() => {
+ *      inst.startup("fkskks");
+ *      setTimeout(() => {
+ *        inst.stop();
+ *      }, 50);
+ *    }, 50)
+ *  }, 50);
+ */
+function runTaskInWorker<
+  T extends (wait: () => boolean, ...args: any[]) => any = (wait: () => boolean, ...args: any) => any
+>(callback: T, staticState?: any): WorkInstance<LastTypes<Parameters<T>>>
+// function runTaskInWorker<
+//   T extends (wait: () => boolean, post: (...args: any[]) => void, ...args: any) => any = (wait: () => boolean, post: (...args: any[]) => void, ...args: any) => any
+// >(callback: T): WorkInstance<LastTypes<Parameters<T>>>
+{
   const funcName = "taskFunction";
-  let inputJs = buildExecutableFunction(callback, funcName, false);
+  let inputJs = buildExecutableFunctionToString(callback, funcName, false);
+  let state: any = null;
+  if (staticState != undefined) {
+    state = JSON.stringify(staticState);
+  }
 
   const rawJs = `
-
+    const { port1, port2 } = new MessageChannel();
+    const state = ${state};
     let cancelled = false;
     let waiting = false;
 
-    const wait = () => {
-      return waiting;
+    let resolve = null;
+
+    port2.onmessage = () => {
+      resolve(waiting);
     };
+
+    const shouldYield = () => {
+      return new Promise(r => {
+        resolve = r;
+        port1.postMessage(null);
+      });
+    };
+
 
     ${inputJs}
     
@@ -40,23 +90,23 @@ export function runingCallbackForLong<T extends (wait: () => boolean, ...args: a
 
     const run = async (args) => {
       waiting = false;
+
+      let params = [...args];
+      if (state != null) {
+        params.unshift(state);
+      }
+
+      params.unshift(shouldYield);
+
       do {
+        if (cancelled) break;
         let post = false;
 
         let res = await ${funcName}(
-          wait,
-          (...args) => {
-            post = true;
-            emit(args);
-          },
-          ...args
+          ...params
         );
-
-        if (!post) {
-          emit(res);
-        }
-
-      } while (!wait() && !cancelled);
+        emit(res);
+      } while (!(await shouldYield()));
     };
 
 
@@ -94,7 +144,7 @@ export function runingCallbackForLong<T extends (wait: () => boolean, ...args: a
     get executing() {
       return _executing;
     },
-    startup(...args) {
+    startup(...args: any[]) {
       _executing = true;
       work.postMessage({ type: "startup", payload: args });
     },
@@ -113,3 +163,6 @@ export function runingCallbackForLong<T extends (wait: () => boolean, ...args: a
 
   return workInst;
 }
+
+
+export { runTaskInWorker };
