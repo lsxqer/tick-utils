@@ -2,11 +2,20 @@
   "compilerOptions": {
     "baseUrl": ".",
     "declaration": true,
+    "noEmit": false,
+    "isolatedModules": true,
+    "declarationDir": "./@types",
+    "declarationMap": false,
+    "diagnostics": true,
     "target": "ESNext",
-    "declarationDir": "./out/@types",
-    "outDir": "./out"
+    "outDir": "./out",
+    "moduleResolution":"Node",
+    "types": [
+      "next-tick"
+    ]
   },
   "include": [
-    "src/*.ts"
+    "src/*.ts",
+    // "node_modules/next-tick/src/**.ts"
   ]
 }

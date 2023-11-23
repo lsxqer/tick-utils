@@ -1,6 +1,6 @@
 
 
-export * from "./out/@types/mian";
+export * from "./@types";
 
-declare module "next-tick" {
+declare module "idb" {
 }

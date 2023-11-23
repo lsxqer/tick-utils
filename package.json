@@ -1,14 +1,14 @@
 {
-  "name": "next-tick",
+  "name": "idb",
   "version": "0.0.1",
   "description": "next event loop, execute callback function before setTimeout",
   "types": "./typedef.d.ts",
-  "main": "src/main.ts",
-  "module": "src/main.ts",
-  "browser": "src/main.ts",
-  
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "browser": "src/index.ts",
   "scripts": {
-    "tsc":"tsc"
+    "tsc": "tsc",
+    "dev": "vite . --force"
   },
   "repository": {
     "type": "git",
@@ -28,11 +28,15 @@
   },
   "homepage": "https://github.com/lsxqXs/next-tick#README",
   "devDependencies": {
-    "typescript": "^4.6.4"
+    "typescript": "^4.6.4",
+    "vite": "^5.0.2"
   },
   "files": [
-   "README.md",
-   "index.d.ts",
-   "out"
-  ]
+    "README.md",
+    "index.d.ts",
+    "out"
+  ],
+  "dependencies": {
+    "next-tick": "https://github.com/lsxqer/tick-utils#flushing"
+  }
 }
