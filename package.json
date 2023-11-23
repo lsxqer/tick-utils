@@ -1,0 +1,42 @@
+{
+  "name": "idb",
+  "version": "0.0.1",
+  "description": "next event loop, execute callback function before setTimeout",
+  "types": "./typedef.d.ts",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "browser": "src/index.ts",
+  "scripts": {
+    "tsc": "tsc",
+    "dev": "vite . --force"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lsxqXs/next-tick.git"
+  },
+  "keywords": [
+    "promise",
+    "event loop",
+    "setTimeout",
+    "promise",
+    "async"
+  ],
+  "author": "lsxq",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lsxqXs/next-tick/issues"
+  },
+  "homepage": "https://github.com/lsxqXs/next-tick#README",
+  "devDependencies": {
+    "typescript": "^4.6.4",
+    "vite": "^5.0.2"
+  },
+  "files": [
+    "README.md",
+    "index.d.ts",
+    "out"
+  ],
+  "dependencies": {
+    "next-tick": "https://github.com/lsxqer/tick-utils#flushing"
+  }
+}
