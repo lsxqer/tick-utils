@@ -1,24 +1,24 @@
 
-import {ExecutionCallback} from "./typedef";
+import { ExecutionCallback } from "./typedef";
 
-let BatchingExecution = false;
+let BatchingExecution = true;
 
 /**
  * resume 重新开始
  */
 export function resumeExecutionCallback() {
-  BatchingExecution = false;
+  BatchingExecution = true;
 }
 
 /**
  * pause 暂停执行
  */
 export function pauseExecutionCallback() {
-  BatchingExecution = true;
+  BatchingExecution = false;
 }
 
 /**
- * true -> 执行中
+ * false -> 执行中
  * @returns bool
  */
 export function hasInExecution() {
@@ -26,10 +26,15 @@ export function hasInExecution() {
 }
 
 
+
 export function runWithBatchingExecution(callback: ExecutionCallback) {
   try {
-    return (!(hasInExecution())) && callback();
+    const next = hasInExecution();
+    if (next) {
+      return callback();
+    }
   } finally {
     pauseExecutionCallback();
   }
 }
+
