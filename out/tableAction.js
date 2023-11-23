@@ -1,5 +1,6 @@
-import { Subscrition } from "./subscriberChannel";
-import { requestPromise, wrapDbRequest } from "./uitls";
+import { Execable } from "./execable";
+import { SubscriberChannel } from "./subscriberChannel";
+import { wrapDbRequest } from "./uitls";
 import { nextTick } from "next-tick";
 function validateType(target, source) {
     for (let [k, v] of Object.entries(source)) {
@@ -45,81 +46,6 @@ function equals(tar, val) {
             return true;
     }
 }
-class ActionContext {
-    database;
-    tableName;
-    constructor(database, tableName) {
-        this.database = database;
-        this.tableName = tableName;
-    }
-    /**
-     * 请求操作的事务
-     */
-    requestTransaction() {
-        return this.database.db.transaction(this.tableName, "readwrite");
-    }
-    currentQueue = [];
-    run(cb) {
-        return new Promise(async (resolve, reject) => {
-            await this.database.ensureInitialized();
-            const trs = this.requestTransaction();
-            const store = trs.objectStore(this.tableName);
-            const result = await cb(store, {
-                reject(reson) {
-                    reject(reson);
-                },
-            });
-            if (result instanceof IDBRequest) {
-                if (result.readyState === "done") {
-                    resolve(result.result);
-                }
-                else {
-                    let r = await wrapDbRequest(result);
-                    resolve(r === undefined ? null : r);
-                }
-            }
-            else {
-                resolve(result);
-            }
-        });
-    }
-    async flushQueue(queue) {
-        let fn = undefined;
-        while ((fn = queue.shift()) !== undefined) {
-            await fn();
-        }
-    }
-    runing = false;
-    async workLoop() {
-        if (this.runing) {
-            return;
-        }
-        this.runing = true;
-        let queue = this.currentQueue;
-        this.currentQueue = [];
-        await this.flushQueue(queue);
-        if (this.currentQueue.length > 0) {
-            nextTick(() => {
-                this.workLoop();
-            });
-        }
-        this.runing = false;
-    }
-    async execute(cb) {
-        let feat = requestPromise();
-        const loop = async () => {
-            let r = await this.run(cb);
-            feat.resolve(r);
-        };
-        this.currentQueue.push(loop);
-        try {
-            return feat.promise;
-        }
-        finally {
-            this.workLoop();
-        }
-    }
-}
 export class TableAction {
     tableName;
     tableFields;
@@ -129,7 +55,8 @@ export class TableAction {
     autoIncrement = false;
     tableMap;
     ctx;
-    onUpdated = new Subscrition();
+    // private onUpdated = new Subscrition();
+    onUpdated = new Map();
     constructor(tableName, 
     /**
      *
@@ -140,7 +67,7 @@ export class TableAction {
         this.tableName = tableName;
         this.tableFields = tableFields;
         this.database = database;
-        this.ctx = new ActionContext(database, tableName);
+        this.ctx = new Execable(database, tableName);
     }
     getIndex(k) {
         let i = this.tableMap.get(k).index;
@@ -150,25 +77,6 @@ export class TableAction {
      * @deprecated
      */
     getPrimaryValue() {
-    }
-    /**
-     * 变化以后内部通知
-     */
-    publish(key, value) {
-        nextTick(() => {
-            this.onUpdated.publish(key, value);
-        });
-    }
-    // 如果存在所有的key
-    publishAll(all) {
-        nextTick(() => {
-            this.onUpdated.publishAll(all);
-        });
-    }
-    notiify(key) {
-        nextTick(() => {
-            this.onUpdated.publish(key, null);
-        });
     }
     initialize() {
         let tableName = this.tableName;
@@ -431,7 +339,6 @@ export class TableAction {
     async has(id) {
         return this.ctx.execute(async (store) => {
             let c = await wrapDbRequest(store.count(id));
-            console.log(c);
             return c !== 0;
         });
     }
@@ -460,6 +367,7 @@ export class TableAction {
         })
             .finally(() => {
             this.publishAll(next);
+            this.publishBy(next);
         });
     }
     /**
@@ -491,11 +399,14 @@ export class TableAction {
                         cursor.continue();
                     }
                 });
+            })
+                .finally(() => {
+                this.publishBy(next);
             });
         });
     }
     /**
-     * 使用主键更新
+     * 使用主键删除
      */
     async deleteBy(primary) {
         return this.ctx.execute(async (store) => {
@@ -504,6 +415,7 @@ export class TableAction {
                 return;
             }
             this.publishAll(item);
+            this.publish(primary, null);
             return store.delete(primary);
         });
     }
@@ -526,6 +438,10 @@ export class TableAction {
             });
         });
     }
+    /**
+     * 或者
+     * 应该有个并且
+     */
     async deleteOrByIndexs(key, val) {
         return this.ctx.execute(store => {
             return new Promise(r => {
@@ -602,7 +518,6 @@ export class TableAction {
      */
     async save(row) {
         let exsit = await this.hasAll(row);
-        console.log(exsit, "es");
         // 不存在就添加
         if (!exsit) {
             return await this.append(row);
@@ -625,15 +540,14 @@ export class TableAction {
         }
         return this.ctx.execute(async (store, u) => {
             if (!this.hasInPrimary(row)) {
-                u.reject("不存在primary " + this.primaryKeys.join(","));
+                throw ("不存在primary " + this.primaryKeys.join(","));
             }
             for (let k of this.primaryKeys) {
                 let primary = row[k];
                 if (primary !== undefined) {
                     const count = await wrapDbRequest(store.count(k));
                     if (count !== 0) {
-                        u.reject(`${primary} exist`);
-                        return false;
+                        throw (`${primary} exist`);
                     }
                 }
             }
@@ -643,9 +557,151 @@ export class TableAction {
         });
     }
     /**
-     * 监听某一个值的变化
+     * 可以监听key值的变化，比如index、primary的value变化
      */
     onUpdate(key, callback) {
-        return this.onUpdated.subscribe(key, callback);
+        // return this.onUpdated.subscribe(key, callback);
+        let evs = this.onUpdated.get(key);
+        if (evs === undefined) {
+            this.onUpdated.set(key, evs = new SubscriberChannel());
+        }
+        let ch = evs;
+        let un = ch.subscribe(callback);
+        return () => {
+            un();
+            if (ch.size === 0) {
+                this.onUpdated.delete(key);
+            }
+        };
+    }
+    /**
+     * 监听主键的value变化
+     * ```ts
+     * onUpdateByValue("id", (value) => {});
+     * let fields = {
+     *  primaryKey: "key"
+     * };
+     * update("id", "v1"); -> {key:"id",value: "v1"}
+     * callback({key:"id",value: "v1"});
+     * ```
+     */
+    onUpdateByValue(val, callback) {
+        // key: string,
+        let uns = [];
+        this.primaryKeys.forEach(el => {
+            // todo: 是否需要索引
+            let m = this.onUpdated.get(el);
+            if (m === undefined) {
+                this.onUpdated.set(el, m = new Map());
+            }
+            let valMap = m;
+            let valCh = valMap.get(val);
+            if (valCh === undefined) {
+                valMap.set(val, valCh = new SubscriberChannel());
+            }
+            let un = valCh.subscribe(callback);
+            uns.push({ un, ch: valMap });
+        });
+        return () => {
+            uns.forEach(el => {
+                el.un();
+                if (el.ch.size === 0) {
+                    el.ch.delete(val);
+                }
+            });
+        };
+    }
+    /**
+     * 发布主键的更新
+     */
+    publishBy(next) {
+        let ks = this.primaryKeys;
+        for (const k of ks) {
+            let publishKey = next[k];
+            if (publishKey !== undefined) {
+                let v = next[k];
+                let inner = this.onUpdated.get(k);
+                nextTick(() => {
+                    // todo: 是否需要索引
+                    if (inner instanceof Map) {
+                        inner.get(v).publish(next);
+                    }
+                    else {
+                        inner.publish(next);
+                    }
+                });
+            }
+        }
+    }
+    /**
+     * 变化以后内部通知
+     */
+    publish(key, value) {
+        nextTick(() => {
+            this.onUpdated.get(key).publish(value);
+        });
+    }
+    // 如果存在所有的key
+    publishAll(all) {
+        this.publishBy(all);
+    }
+    notiify(key) {
+        nextTick(() => {
+            this.onUpdated.get(key).publish(null);
+        });
+    }
+}
+function publish(ch, args) {
+    // 使用nexttick
+    ch.publish(args);
+}
+class Subscrition2 {
+    onUpdated = new Map();
+    /**
+     * 可以监听key值的变化，比如index、primary的value变化
+     */
+    onUpdateByIndex(key, callback) {
+        // return this.onUpdated.subscribe(key, callback);
+        let evs = this.onUpdated.get(key);
+        if (evs === undefined) {
+            this.onUpdated.set(key, evs = new SubscriberChannel());
+        }
+        let ch = evs;
+        let un = ch.subscribe(callback);
+        return () => {
+            un();
+            if (ch.size === 0) {
+                this.onUpdated.delete(key);
+            }
+        };
+    }
+    /**
+     * 监听主键的value变化
+     * ```ts
+     * onUpdateByValue("id", (value) => {});
+     * let fields = {
+     *  primaryKey: "key"
+     * };
+     * update("id", "v1"); -> {key:"id",value: "v1"}
+     * callback({key:"id",value: "v1"});
+     * ```
+     */
+    onUpdateByValue(key, val, callback) {
+        let m = this.onUpdated.get(key);
+        if (m === undefined) {
+            this.onUpdated.set(key, m = new Map());
+        }
+        let valMap = m;
+        let valCh = valMap.get(val);
+        if (valCh === undefined) {
+            valMap.set(val, valCh = new SubscriberChannel());
+        }
+        let un = valCh.subscribe(callback);
+        return () => {
+            un();
+            if (valCh.size === 0) {
+                valMap.delete(val);
+            }
+        };
     }
 }

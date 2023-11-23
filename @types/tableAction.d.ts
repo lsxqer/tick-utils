@@ -34,12 +34,6 @@ export declare class TableAction<T extends TableFields = TableFields> {
      * @deprecated
      */
     private getPrimaryValue;
-    /**
-     * 变化以后内部通知
-     */
-    private publish;
-    private publishAll;
-    notiify(key: GetTableFieldsKeys<T>): void;
     protected initialize(): void;
     protected hasInPrimary(obj: GetTableFields<T>): boolean;
     protected validatePrimaryValue(obj: GetTableFields<T>): boolean;
@@ -89,13 +83,17 @@ export declare class TableAction<T extends TableFields = TableFields> {
      */
     updateByIndex(key: GetTableFieldsKeys<T>, val: unknown, next: GetTableFields<T>): Promise<unknown>;
     /**
-     * 使用主键更新
+     * 使用主键删除
      */
     deleteBy(primary: IDBValidKey): Promise<unknown>;
     /**
      * 使用索引删除
      */
     deleteByIndex(key: GetTableFieldsKeys<T>, val: unknown): Promise<unknown>;
+    /**
+     * 或者
+     * 应该有个并且
+     */
     deleteOrByIndexs(key: GetTableFieldsKeys<T>, val: unknown[]): Promise<unknown>;
     /**
      * 清空表
@@ -123,8 +121,30 @@ export declare class TableAction<T extends TableFields = TableFields> {
      */
     append(row: GetTableFields<T>): Promise<boolean>;
     /**
-     * 监听某一个值的变化
+     * 可以监听key值的变化，比如index、primary的value变化
      */
-    onUpdate<V = any>(key: GetTableFieldsKeys<T>, callback: (value: V) => void): () => void;
+    onUpdate<V = any>(key: string, callback: (value: V) => void): () => void;
+    /**
+     * 监听主键的value变化
+     * ```ts
+     * onUpdateByValue("id", (value) => {});
+     * let fields = {
+     *  primaryKey: "key"
+     * };
+     * update("id", "v1"); -> {key:"id",value: "v1"}
+     * callback({key:"id",value: "v1"});
+     * ```
+     */
+    onUpdateByValue<V = any>(val: string, callback: (value: V) => void): () => void;
+    /**
+     * 发布主键的更新
+     */
+    private publishBy;
+    /**
+     * 变化以后内部通知
+     */
+    private publish;
+    private publishAll;
+    notiify(key: GetTableFieldsKeys<T>): void;
 }
 export {};

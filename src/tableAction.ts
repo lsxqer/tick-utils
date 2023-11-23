@@ -1,6 +1,7 @@
 import { Database } from "./database";
+import { Execable } from "./execable";
 import { TableField } from "./mapStore";
-import { Subscrition } from "./subscriberChannel";
+import { SubscriberChannel, Subscrition } from "./subscriberChannel";
 import { requestPromise, wrapDbRequest } from "./uitls";
 import { nextTick } from "next-tick";
 
@@ -77,109 +78,6 @@ export interface TableFields {
 }
 
 
-class ActionContext {
-  constructor(
-    private readonly database: Database,
-    private readonly tableName: string
-  ) { }
-
-
-  /**
-   * 请求操作的事务
-   */
-  private requestTransaction(): IDBTransaction {
-    return this.database.db.transaction(this.tableName, "readwrite");
-  }
-
-
-
-
-  private currentQueue: VoidFunction[] = [];
-
-  private run<R = any>(cb) {
-
-    return new Promise<R>(async (resolve, reject) => {
-
-      await this.database.ensureInitialized();
-      const trs = this.requestTransaction();
-
-      const store = trs.objectStore(this.tableName);
-
-
-      const result = await cb(store, {
-        reject(reson) {
-          reject(reson);
-        },
-      });
-
-      if (result instanceof IDBRequest) {
-        if (result.readyState === "done") {
-          resolve(result.result);
-        }
-        else {
-          let r = await wrapDbRequest(result);
-          resolve(r === undefined ? null : r as R);
-        }
-      }
-      else {
-        resolve(result);
-      }
-    });
-  }
-
-
-  private async flushQueue(queue: VoidFunction[]) {
-
-    let fn = undefined;
-    while ((fn = queue.shift()) !== undefined) {
-      await fn();
-    }
-  }
-
-  private runing = false;
-  private async workLoop() {
-
-    if (this.runing) {
-      return;
-    }
-
-    this.runing = true;
-    let queue = this.currentQueue;
-    this.currentQueue = [];
-
-    await this.flushQueue(queue);
-
-    if (this.currentQueue.length > 0){
-      nextTick(() =>{ 
-        this.workLoop();
-      });
-    }
-
-    this.runing = false;
-  }
-
-  async execute<R>(
-    cb: (store: IDBObjectStore, context: { reject: (reson: any) => void }) => IDBRequest | any
-  ): Promise<R | null> {
-
-    let feat = requestPromise();
-
-    const loop = async () => {
-      let r = await this.run(cb);
-      feat.resolve(r);
-    };
-
-    this.currentQueue.push(loop);
-
-    try {
-      return feat.promise;
-    } finally {
-      this.workLoop();
-    }
-  }
-}
-
-
 type GetTableFields<T extends TableFields> = { [k in keyof T]?: unknown };
 type GetTableFieldsKeys<T extends TableFields> = keyof T extends string ? keyof T : never;
 
@@ -191,9 +89,11 @@ export class TableAction<T extends TableFields = TableFields> {
   public primaryKeys: string[];
   public autoIncrement: boolean = false;
   private tableMap: Map<GetTableFieldsKeys<T>, TableField>;
-  private ctx: ActionContext;
+  private ctx: Execable;
 
-  private onUpdated = new Subscrition();
+  // private onUpdated = new Subscrition();
+  private onUpdated = new Map<string, SubscriberChannel | Map<string, SubscriberChannel>>();
+
 
   constructor(
     public readonly tableName: string,
@@ -206,7 +106,7 @@ export class TableAction<T extends TableFields = TableFields> {
     private readonly tableFields: T,
     private readonly database: Database
   ) {
-    this.ctx = new ActionContext(database, tableName);
+    this.ctx = new Execable(database, tableName);
   }
 
 
@@ -224,28 +124,6 @@ export class TableAction<T extends TableFields = TableFields> {
   }
 
 
-
-  /**
-   * 变化以后内部通知
-   */
-  private publish(key: GetTableFieldsKeys<T>, value: GetTableFields<T>) {
-    nextTick(() => {
-      this.onUpdated.publish(key, value);
-    });
-  }
-
-  // 如果存在所有的key
-  private publishAll(all: GetTableFields<T>) {
-    nextTick(() => {
-      this.onUpdated.publishAll(all);
-    });
-  }
-
-  public notiify(key: GetTableFieldsKeys<T>) {
-    nextTick(() => {
-      this.onUpdated.publish(key, null);
-    });
-  }
 
   protected initialize() {
     let tableName = this.tableName;
@@ -542,7 +420,7 @@ export class TableAction<T extends TableFields = TableFields> {
   async has(id: IDBValidKey) {
     return this.ctx.execute<boolean>(async (store) => {
       let c = await wrapDbRequest(store.count(id));
-      console.log(c);
+
       return c !== 0;
     });
   }
@@ -575,6 +453,7 @@ export class TableAction<T extends TableFields = TableFields> {
     })
       .finally(() => {
         this.publishAll(next);
+        this.publishBy(next);
       });
   }
 
@@ -611,12 +490,15 @@ export class TableAction<T extends TableFields = TableFields> {
             cursor.continue();
           }
         }) as any;
-      });
+      })
+        .finally(() => {
+          this.publishBy(next);
+        });
     });
   }
 
   /**
-   * 使用主键更新
+   * 使用主键删除
    */
   async deleteBy(primary: IDBValidKey) {
     return this.ctx.execute(async store => {
@@ -625,6 +507,7 @@ export class TableAction<T extends TableFields = TableFields> {
         return;
       }
       this.publishAll(item);
+      this.publish(primary as any, null);
       return store.delete(primary);
     });
   }
@@ -645,10 +528,14 @@ export class TableAction<T extends TableFields = TableFields> {
             cursor.continue();
           }
         }) as any;
-      })
+      });
     });
   }
 
+  /**
+   * 或者
+   * 应该有个并且
+   */
   async deleteOrByIndexs(key: GetTableFieldsKeys<T>, val: unknown[]) {
     return this.ctx.execute(store => {
       return new Promise(r => {
@@ -741,7 +628,7 @@ export class TableAction<T extends TableFields = TableFields> {
   public async save(row: GetTableFields<T>): Promise<boolean> {
 
     let exsit = await this.hasAll(row);
-    console.log(exsit, "es");
+
     // 不存在就添加
     if (!exsit) {
       return await this.append(row)
@@ -767,17 +654,15 @@ export class TableAction<T extends TableFields = TableFields> {
 
     return this.ctx.execute(async (store, u) => {
       if (!this.hasInPrimary(row)) {
-        u.reject("不存在primary " + this.primaryKeys.join(","));
+        throw ("不存在primary " + this.primaryKeys.join(","));
       }
-
       for (let k of this.primaryKeys) {
         let primary = row[k];
 
         if (primary !== undefined) {
           const count = await wrapDbRequest<number>(store.count(k));
           if (count !== 0) {
-            u.reject(`${primary} exist`);
-            return false;
+            throw (`${primary} exist`);
           }
         }
       }
@@ -790,10 +675,176 @@ export class TableAction<T extends TableFields = TableFields> {
   }
 
 
+
+
   /**
-   * 监听某一个值的变化
+   * 可以监听key值的变化，比如index、primary的value变化
    */
-  public onUpdate<V = any>(key: GetTableFieldsKeys<T>, callback: (value: V) => void) {
-    return this.onUpdated.subscribe(key as string, callback);
+  onUpdate<V = any>(key: string, callback: (value: V) => void) {
+    // return this.onUpdated.subscribe(key, callback);
+    let evs = this.onUpdated.get(key);
+    if (evs === undefined) {
+      this.onUpdated.set(key, evs = new SubscriberChannel());
+    }
+    let ch = evs as SubscriberChannel;
+    let un = ch.subscribe(callback);
+
+    return () => {
+      un();
+      if (ch.size === 0) {
+        this.onUpdated.delete(key);
+      }
+    };
   }
+
+  /**
+   * 监听主键的value变化
+   * ```ts
+   * onUpdateByValue("id", (value) => {});
+   * let fields = {
+   *  primaryKey: "key"
+   * };
+   * update("id", "v1"); -> {key:"id",value: "v1"}
+   * callback({key:"id",value: "v1"});
+   * ```
+   */
+  public onUpdateByValue<V = any>(val: string, callback: (value: V) => void) {
+    // key: string,
+    let uns = [] as { un: VoidFunction, ch: Map<string, SubscriberChannel> }[];
+    this.primaryKeys.forEach(el => {
+      // todo: 是否需要索引
+      let m = this.onUpdated.get(el);
+      if (m === undefined) {
+        this.onUpdated.set(el, m = new Map());
+      }
+
+      let valMap = m as Map<string, SubscriberChannel>;
+      let valCh = valMap.get(val);
+      if (valCh === undefined) {
+        valMap.set(val, valCh = new SubscriberChannel());
+      }
+
+      let un = valCh.subscribe(callback);
+      uns.push({ un, ch: valMap });
+    });
+
+
+    return () => {
+      uns.forEach(el => {
+        el.un();
+        if (el.ch.size === 0) {
+          el.ch.delete(val);
+        }
+      });
+    };
+  }
+
+
+  /**
+   * 发布主键的更新
+   */
+  private publishBy(next: any) {
+    let ks = this.primaryKeys;
+    for (const k of ks) {
+      let publishKey = next[k];
+      if (publishKey !== undefined) {
+        let v = next[k];
+        let inner = this.onUpdated.get(k);
+
+        nextTick(() => {
+          // todo: 是否需要索引
+          if (inner instanceof Map) {
+            inner.get(v).publish(next);
+          }
+          else {
+            inner.publish(next);
+          }
+        });
+      }
+    }
+  }
+
+  /**
+   * 变化以后内部通知
+   */
+  private publish(key: GetTableFieldsKeys<T>, value: GetTableFields<T>) {
+    nextTick(() => {
+      (this.onUpdated.get(key) as SubscriberChannel).publish(value);
+    });
+  }
+
+  // 如果存在所有的key
+  private publishAll(all: GetTableFields<T>) {
+    this.publishBy(all);
+  }
+
+  public notiify(key: GetTableFieldsKeys<T>) {
+    nextTick(() => {
+      (this.onUpdated.get(key) as SubscriberChannel).publish(null);
+    });
+  }
+
+
+}
+
+function publish(ch: SubscriberChannel, args: any) {
+  // 使用nexttick
+  ch.publish(args);
+}
+
+class Subscrition2 {
+  private onUpdated = new Map<string, SubscriberChannel | Map<string, SubscriberChannel>>();
+
+  /**
+   * 可以监听key值的变化，比如index、primary的value变化
+   */
+  onUpdateByIndex<V = any>(key: string, callback: (value: V) => void) {
+    // return this.onUpdated.subscribe(key, callback);
+    let evs = this.onUpdated.get(key);
+    if (evs === undefined) {
+      this.onUpdated.set(key, evs = new SubscriberChannel());
+    }
+    let ch = evs as SubscriberChannel;
+    let un = ch.subscribe(callback);
+
+    return () => {
+      un();
+      if (ch.size === 0) {
+        this.onUpdated.delete(key);
+      }
+    };
+  }
+
+  /**
+   * 监听主键的value变化
+   * ```ts
+   * onUpdateByValue("id", (value) => {});
+   * let fields = {
+   *  primaryKey: "key"
+   * };
+   * update("id", "v1"); -> {key:"id",value: "v1"}
+   * callback({key:"id",value: "v1"});
+   * ```
+   */
+  onUpdateByValue<V = any>(key: string, val: string, callback: (value: V) => void) {
+    let m = this.onUpdated.get(key);
+    if (m === undefined) {
+      this.onUpdated.set(key, m = new Map());
+    }
+    let valMap = m as Map<string, SubscriberChannel>;
+    let valCh = valMap.get(val);
+    if (valCh === undefined) {
+      valMap.set(val, valCh = new SubscriberChannel());
+    }
+
+    let un = valCh.subscribe(callback);
+
+    return () => {
+      un();
+      if (valCh.size === 0) {
+        valMap.delete(val);
+      }
+    };
+  }
+
 }
