@@ -216,6 +216,9 @@ export class TableAction<T extends TableFields = TableFields> {
     return typeof i === "string" ? i : i === true ? k as string : null;
   }
 
+  /**
+   * @deprecated
+   */
   private getPrimaryValue() {
 
   }
@@ -226,38 +229,22 @@ export class TableAction<T extends TableFields = TableFields> {
    * 变化以后内部通知
    */
   private publish(key: GetTableFieldsKeys<T>, value: GetTableFields<T>) {
-    setTimeout(() => {
-      // let keyIndex = this.getIndex(key as GetTableFieldsKeys<T>);
-      // if (keyIndex !== null) {
-      // }
+    nextTick(() => {
       this.onUpdated.publish(key, value);
-    }, 0);
+    });
   }
 
   // 如果存在所有的key
   private publishAll(all: GetTableFields<T>) {
-    // let kv: any = {};
-    // let keys = Object.keys(all);
-
-    // for (let k of keys) {
-    //   let keyIndex = this.getIndex(k as GetTableFieldsKeys<T>);
-    //   if (keyIndex !== null) {
-    //     kv[keyIndex] = all[k];
-    //   }
-    // }
-
-    setTimeout(() => {
+    nextTick(() => {
       this.onUpdated.publishAll(all);
-    }, 0);
+    });
   }
 
   public notiify(key: GetTableFieldsKeys<T>) {
-    setTimeout(() => {
-      // let keyIndex = this.getIndex(key as GetTableFieldsKeys<T>);
-      // if (keyIndex !== null) {
-      // }
+    nextTick(() => {
       this.onUpdated.publish(key, null);
-    }, 0);
+    });
   }
 
   protected initialize() {
@@ -810,12 +797,3 @@ export class TableAction<T extends TableFields = TableFields> {
     return this.onUpdated.subscribe(key as string, callback);
   }
 }
-
-
-// new TableAction({
-//   a: {
-//     index: true,
-//     unique: false,
-//   }
-// }, {} as any,)
-//   .queryByIndex("a", 1);
