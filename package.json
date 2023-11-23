@@ -3,9 +3,9 @@
   "version": "0.0.1",
   "description": "next event loop, execute callback function before setTimeout",
   "types": "./typedef.d.ts",
-  "main": "src/main.ts",
-  "module": "src/main.ts",
-  "browser": "src/main.ts",
+  "main": "out/main.js",
+  "module": "out/main.js",
+  "browser": "out/main.js",
   
   "scripts": {
     "tsc":"tsc"
