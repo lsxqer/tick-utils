@@ -29,13 +29,10 @@ export function flushCurrentCallback() {
     if (queue === null) {
         return;
     }
-    let s = Date.now();
     while (queue.length > 0 && !shouldYieldWithStart()) {
         let callback = queue.shift();
         callback();
     }
-    let s2 = Date.now();
-    console.log(s2 - s, currentCallbackQueue.length, "暂定执行执行终端", "nextLoopFlushCallbackQueue");
     if (queue.length === 0) {
         currentCallbackQueue = null;
     }
