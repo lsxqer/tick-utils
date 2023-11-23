@@ -1,0 +1,38 @@
+{
+  "name": "next-tick",
+  "version": "0.0.1",
+  "description": "next event loop, execute callback function before setTimeout",
+  "types": "./typedef.d.ts",
+  "main": "src/main.ts",
+  "module": "src/main.ts",
+  "browser": "src/main.ts",
+  
+  "scripts": {
+    "tsc":"tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lsxqXs/next-tick.git"
+  },
+  "keywords": [
+    "promise",
+    "event loop",
+    "setTimeout",
+    "promise",
+    "async"
+  ],
+  "author": "lsxq",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lsxqXs/next-tick/issues"
+  },
+  "homepage": "https://github.com/lsxqXs/next-tick#README",
+  "devDependencies": {
+    "typescript": "^4.6.4"
+  },
+  "files": [
+   "README.md",
+   "index.d.ts",
+   "out"
+  ]
+}
