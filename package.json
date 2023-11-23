@@ -6,13 +6,13 @@
     "type": "git",
     "url": "https://github.com/lsxqXs/next-tick.git"
   },
-  "main": "src/index.ts",
-  "module": "src/index.ts",
+  "main": "out/index.js",
+  "module": "oout/index.js",
   "devDependencies": {
     "typescript": "^4.6.4",
     "vite": "^5.0.2"
   },
-  "browser": "src/index.ts",
+  "browser": "out/index.js",
   "bugs": {
     "url": "https://github.com/lsxqXs/next-tick/issues"
   },
