@@ -367,7 +367,6 @@ export class TableAction {
         })
             .finally(() => {
             this.publishAll(next);
-            this.publishBy(next);
         });
     }
     /**
@@ -394,14 +393,18 @@ export class TableAction {
                                 src[key] = v;
                             }
                             r(cursor.update(src));
-                            this.publish(key, val);
+                            this.publishByIndex(key, val);
                         }
                         cursor.continue();
                     }
                 });
             })
                 .finally(() => {
-                this.publishBy(next);
+                for (const k of Object.keys(next)) {
+                    if (this.primaryKeys.includes(k)) {
+                        this.publishByPaths([k, next[k]], next);
+                    }
+                }
             });
         });
     }
@@ -414,9 +417,20 @@ export class TableAction {
             if (item === undefined) {
                 return;
             }
-            this.publishAll(item);
-            this.publish(primary, null);
-            return store.delete(primary);
+            let keyPaths = [];
+            Object.keys(item).forEach(k => {
+                keyPaths.push([k]);
+            });
+            for (let key of this.primaryKeys) {
+                if (item[key] === primary) {
+                    keyPaths.push([key, item[key]]);
+                    break;
+                }
+            }
+            await store.delete(primary);
+            keyPaths.forEach(ks => {
+                this.publishByPaths(ks, null);
+            });
         });
     }
     /**
@@ -430,7 +444,7 @@ export class TableAction {
                     if (cursor) {
                         if (equals(cursor.value[key], val)) {
                             r(cursor.delete());
-                            this.publish(key, val);
+                            this.publishByIndex(key, val);
                         }
                         cursor.continue();
                     }
@@ -450,7 +464,7 @@ export class TableAction {
                     if (cursor) {
                         if (val.includes(cursor.value[key])) {
                             r(cursor.delete());
-                            this.publish(key, cursor.value[key]);
+                            this.publishByIndex(key, cursor.value[key]);
                         }
                         cursor.continue();
                     }
@@ -462,25 +476,17 @@ export class TableAction {
      * 清空表
      */
     async clear() {
-        return this.ctx.execute(store => {
-            let all = Object.keys(this.tableFields).reduce((p, a) => {
-                p[a] = null;
-                return p;
-            }, {});
-            this.publishAll(all);
-            return store.clear();
+        return this.ctx.execute(async (store) => {
+            await store.clear();
+            this.publishAllByNull();
         });
     }
     /**
      * 删除表
      */
-    drop() {
-        let all = Object.keys(this.tableFields).reduce((p, a) => {
-            p[a] = null;
-            return p;
-        }, {});
-        this.publishAll(all);
-        this.database.db.deleteObjectStore(this.tableName);
+    async drop() {
+        await this.database.db.deleteObjectStore(this.tableName);
+        this.publishAllByNull();
     }
     /**
      * 使用字段循环所有
@@ -611,97 +617,75 @@ export class TableAction {
             });
         };
     }
-    /**
-     * 发布主键的更新
-     */
-    publishBy(next) {
-        let ks = this.primaryKeys;
-        for (const k of ks) {
-            let publishKey = next[k];
-            if (publishKey !== undefined) {
-                let v = next[k];
-                let inner = this.onUpdated.get(k);
-                nextTick(() => {
-                    // todo: 是否需要索引
-                    if (inner instanceof Map) {
-                        inner.get(v).publish(next);
-                    }
-                    else {
-                        inner.publish(next);
-                    }
-                });
+    publishAllByNull() {
+        let vals = Array.from(this.onUpdated.values());
+        let pubs = [];
+        for (let i = 0; i < vals.length; i++) {
+            let val = vals[i];
+            if (val instanceof Map) {
+                vals.push(...Array.from(val.values()));
             }
+            else {
+                pubs.push(val);
+            }
+        }
+        pubs.forEach(p => p.publish(null));
+    }
+    publishByPaths(keys, next) {
+        let current = this.onUpdated;
+        let pub = null;
+        while (keys.length > 0) {
+            let key = keys.shift();
+            let el = current.get(key);
+            if (el === undefined) {
+                return;
+            }
+            if (el instanceof Map) {
+                current = el;
+            }
+            else {
+                pub = el;
+            }
+        }
+        if (pub !== null) {
+            pub.publish(next);
         }
     }
     /**
      * 变化以后内部通知
      */
-    publish(key, value) {
+    publishByIndex(key, value) {
+        let pub = this.onUpdated.get(key);
+        if (pub === undefined) {
+            return;
+        }
+        if (pub instanceof Map) {
+            return;
+        }
         nextTick(() => {
-            this.onUpdated.get(key).publish(value);
+            pub.publish(value);
         });
     }
     // 如果存在所有的key
     publishAll(all) {
-        this.publishBy(all);
-    }
-    notiify(key) {
-        nextTick(() => {
-            this.onUpdated.get(key).publish(null);
+        // 索引通知
+        for (let [k, v] of Object.entries(all)) {
+            this.publishByIndex(k, v);
+        }
+        this.primaryKeys.forEach(el => {
+            if (all[el] !== undefined) {
+                let t = [el, all[el]];
+                this.publishByPaths(t, all);
+            }
         });
     }
-}
-function publish(ch, args) {
-    // 使用nexttick
-    ch.publish(args);
-}
-class Subscrition2 {
-    onUpdated = new Map();
-    /**
-     * 可以监听key值的变化，比如index、primary的value变化
-     */
-    onUpdateByIndex(key, callback) {
-        // return this.onUpdated.subscribe(key, callback);
-        let evs = this.onUpdated.get(key);
-        if (evs === undefined) {
-            this.onUpdated.set(key, evs = new SubscriberChannel());
+    notify(key) {
+        let pub = this.onUpdated.get(key);
+        if (pub === undefined) {
+            return;
         }
-        let ch = evs;
-        let un = ch.subscribe(callback);
-        return () => {
-            un();
-            if (ch.size === 0) {
-                this.onUpdated.delete(key);
-            }
-        };
-    }
-    /**
-     * 监听主键的value变化
-     * ```ts
-     * onUpdateByValue("id", (value) => {});
-     * let fields = {
-     *  primaryKey: "key"
-     * };
-     * update("id", "v1"); -> {key:"id",value: "v1"}
-     * callback({key:"id",value: "v1"});
-     * ```
-     */
-    onUpdateByValue(key, val, callback) {
-        let m = this.onUpdated.get(key);
-        if (m === undefined) {
-            this.onUpdated.set(key, m = new Map());
-        }
-        let valMap = m;
-        let valCh = valMap.get(val);
-        if (valCh === undefined) {
-            valMap.set(val, valCh = new SubscriberChannel());
-        }
-        let un = valCh.subscribe(callback);
-        return () => {
-            un();
-            if (valCh.size === 0) {
-                valMap.delete(val);
-            }
-        };
+        nextTick(() => {
+            pub.publish(null);
+        });
     }
 }

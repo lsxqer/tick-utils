@@ -102,7 +102,7 @@ export declare class TableAction<T extends TableFields = TableFields> {
     /**
      * 删除表
      */
-    drop(): void;
+    drop(): Promise<void>;
     /**
      * 使用字段循环所有
      * ? 是吗
@@ -136,15 +136,13 @@ export declare class TableAction<T extends TableFields = TableFields> {
      * ```
      */
     onUpdateByValue<V = any>(val: string, callback: (value: V) => void): () => void;
-    /**
-     * 发布主键的更新
-     */
-    private publishBy;
+    private publishAllByNull;
+    private publishByPaths;
     /**
      * 变化以后内部通知
      */
-    private publish;
+    private publishByIndex;
     private publishAll;
-    notiify(key: GetTableFieldsKeys<T>): void;
+    notify(key: GetTableFieldsKeys<T>): void;
 }
 export {};

@@ -453,7 +453,6 @@ export class TableAction<T extends TableFields = TableFields> {
     })
       .finally(() => {
         this.publishAll(next);
-        this.publishBy(next);
       });
   }
 
@@ -485,14 +484,18 @@ export class TableAction<T extends TableFields = TableFields> {
                 src[key] = v;
               }
               r(cursor.update(src));
-              this.publish(key, val as any)
+              this.publishByIndex(key, val as any)
             }
             cursor.continue();
           }
         }) as any;
       })
         .finally(() => {
-          this.publishBy(next);
+          for (const k of Object.keys(next)) {
+            if (this.primaryKeys.includes(k)) {
+              this.publishByPaths([k, next[k] as string], next);
+            }
+          }
         });
     });
   }
@@ -506,9 +509,24 @@ export class TableAction<T extends TableFields = TableFields> {
       if (item === undefined) {
         return;
       }
-      this.publishAll(item);
-      this.publish(primary as any, null);
-      return store.delete(primary);
+
+      let keyPaths = [] as string[][];
+      Object.keys(item).forEach(k => {
+        keyPaths.push([k]);
+      });
+
+      for (let key of this.primaryKeys) {
+        if (item[key] === primary) {
+          keyPaths.push([key, item[key]]);
+          break;
+        }
+      }
+
+      await store.delete(primary);
+
+      keyPaths.forEach(ks => {
+        this.publishByPaths(ks, null);
+      });
     });
   }
 
@@ -523,7 +541,7 @@ export class TableAction<T extends TableFields = TableFields> {
           if (cursor) {
             if (equals(cursor.value[key], val)) {
               r(cursor.delete());
-              this.publish(key, val as any);
+              this.publishByIndex(key, val as any);
             }
             cursor.continue();
           }
@@ -544,7 +562,7 @@ export class TableAction<T extends TableFields = TableFields> {
           if (cursor) {
             if (val.includes(cursor.value[key])) {
               r(cursor.delete());
-              this.publish(key, cursor.value[key] as any);
+              this.publishByIndex(key, cursor.value[key] as any);
             }
             cursor.continue();
           }
@@ -557,34 +575,18 @@ export class TableAction<T extends TableFields = TableFields> {
    * 清空表
    */
   async clear() {
-    return this.ctx.execute(store => {
-      let all = Object.keys(this.tableFields).reduce(
-        (p, a) => {
-          p[a] = null;
-          return p
-        },
-        {}
-      );
-
-      this.publishAll(all);
-      return store.clear();
+    return this.ctx.execute(async (store) => {
+      await store.clear();
+      this.publishAllByNull();
     });
   }
 
   /**
    * 删除表
    */
-  drop() {
-    let all = Object.keys(this.tableFields).reduce(
-      (p, a) => {
-        p[a] = null;
-        return p
-      },
-      {}
-    );
-
-    this.publishAll(all);
-    this.database.db.deleteObjectStore(this.tableName);
+  async drop() {
+    await this.database.db.deleteObjectStore(this.tableName);
+    this.publishAllByNull();
   }
 
   /**
@@ -739,112 +741,87 @@ export class TableAction<T extends TableFields = TableFields> {
     };
   }
 
+  private publishAllByNull() {
+    let vals = Array.from(this.onUpdated.values());
+    let pubs = [] as SubscriberChannel[];
 
-  /**
-   * 发布主键的更新
-   */
-  private publishBy(next: any) {
-    let ks = this.primaryKeys;
-    for (const k of ks) {
-      let publishKey = next[k];
-      if (publishKey !== undefined) {
-        let v = next[k];
-        let inner = this.onUpdated.get(k);
-
-        nextTick(() => {
-          // todo: 是否需要索引
-          if (inner instanceof Map) {
-            inner.get(v).publish(next);
-          }
-          else {
-            inner.publish(next);
-          }
-        });
+    for (let i = 0; i < vals.length; i++) {
+      let val = vals[i];
+      if (val instanceof Map) {
+        vals.push(...Array.from(val.values()));
       }
+      else {
+        pubs.push(val);
+      }
+    }
+    pubs.forEach(p => p.publish(null));
+  }
+
+  private publishByPaths(keys: string[], next: unknown) {
+    let current = this.onUpdated;
+    let pub = null as SubscriberChannel | null;
+    while (keys.length > 0) {
+      let key = keys.shift()!;
+      let el = current.get(key);
+
+      if (el === undefined) {
+        return;
+      }
+
+      if (el instanceof Map) {
+        current = el;
+      }
+      else {
+        pub = el;
+      }
+    }
+    if (pub !== null) {
+      pub.publish(next);
     }
   }
 
   /**
    * 变化以后内部通知
    */
-  private publish(key: GetTableFieldsKeys<T>, value: GetTableFields<T>) {
+  private publishByIndex(key: string, value: unknown) {
+    let pub = this.onUpdated.get(key) as SubscriberChannel;
+    if (pub === undefined) {
+      return;
+    }
+    if (pub instanceof Map) {
+      return;
+    }
     nextTick(() => {
-      (this.onUpdated.get(key) as SubscriberChannel).publish(value);
+      pub.publish(value);
     });
   }
 
   // 如果存在所有的key
   private publishAll(all: GetTableFields<T>) {
-    this.publishBy(all);
-  }
 
-  public notiify(key: GetTableFieldsKeys<T>) {
-    nextTick(() => {
-      (this.onUpdated.get(key) as SubscriberChannel).publish(null);
+    // 索引通知
+    for (let [k, v] of Object.entries(all)) {
+      this.publishByIndex(k, v);
+    }
+
+    this.primaryKeys.forEach(el => {
+      if (all[el] !== undefined) {
+        let t = [el, all[el]] as string[];
+        this.publishByPaths(t, all);
+      }
     });
   }
 
-
-}
-
-function publish(ch: SubscriberChannel, args: any) {
-  // 使用nexttick
-  ch.publish(args);
-}
-
-class Subscrition2 {
-  private onUpdated = new Map<string, SubscriberChannel | Map<string, SubscriberChannel>>();
-
-  /**
-   * 可以监听key值的变化，比如index、primary的value变化
-   */
-  onUpdateByIndex<V = any>(key: string, callback: (value: V) => void) {
-    // return this.onUpdated.subscribe(key, callback);
-    let evs = this.onUpdated.get(key);
-    if (evs === undefined) {
-      this.onUpdated.set(key, evs = new SubscriberChannel());
+  public notify(key: GetTableFieldsKeys<T>) {
+    let pub = this.onUpdated.get(key) as SubscriberChannel;
+    if (pub === undefined) {
+      return;
     }
-    let ch = evs as SubscriberChannel;
-    let un = ch.subscribe(callback);
+    nextTick(() => {
+      pub.publish(null);
+    });
 
-    return () => {
-      un();
-      if (ch.size === 0) {
-        this.onUpdated.delete(key);
-      }
-    };
   }
 
-  /**
-   * 监听主键的value变化
-   * ```ts
-   * onUpdateByValue("id", (value) => {});
-   * let fields = {
-   *  primaryKey: "key"
-   * };
-   * update("id", "v1"); -> {key:"id",value: "v1"}
-   * callback({key:"id",value: "v1"});
-   * ```
-   */
-  onUpdateByValue<V = any>(key: string, val: string, callback: (value: V) => void) {
-    let m = this.onUpdated.get(key);
-    if (m === undefined) {
-      this.onUpdated.set(key, m = new Map());
-    }
-    let valMap = m as Map<string, SubscriberChannel>;
-    let valCh = valMap.get(val);
-    if (valCh === undefined) {
-      valMap.set(val, valCh = new SubscriberChannel());
-    }
-
-    let un = valCh.subscribe(callback);
-
-    return () => {
-      un();
-      if (valCh.size === 0) {
-        valMap.delete(val);
-      }
-    };
-  }
 
 }
