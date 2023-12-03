@@ -1,5 +1,4 @@
-//@ts-nocheck
-import { FieldMapValue, PrimaryMapValue, TableField } from "./mapStore";
+import { DynamicTableField, DatabaseStore, PrimaryMapValue, TableField } from "./mapStore";
 import { requestPromise } from "./uitls";
 
 
@@ -9,101 +8,111 @@ export interface IDatabase {
   name: string;
 }
 
+
+
 export class Database {
 
-  private currentVersion: number;
+
+  /**
+   * tablename -> DatabaseStore
+   */
+  private stores = new Map<string, DatabaseStore>();
   private initialized: boolean = false;
 
-  private primaryKeyMap = new Map<string, PrimaryMapValue>();
-  private stores = new Map<string, Map<string, TableField>>();
-
+  public version: number;
+  public dbName: string;
   public db: IDBDatabase | null = null;
 
-
-
-  constructor(private options: IDatabase) {
-    this.currentVersion = options.version;
+  constructor(options: IDatabase) {
+    this.dbName = options.name;
+    this.version = options.version;
   }
 
-  opendPromise: ReturnType<typeof requestPromise<IDBDatabase | undefined>> | null = null;
+  private promise: ReturnType<typeof requestPromise<IDBDatabase | undefined>> | null = null;
 
 
-  /**
-   * 初始化打开数据库
-   */
-  private openDatabase(openDb: IDBOpenDBRequest) {
-    this.opendPromise = requestPromise<IDBDatabase>();
+  private create(db: IDBDatabase) {
 
-    openDb.onsuccess = () => {
+    this.stores.forEach((store, tableName) => {
 
-      if (this.db !== null) {
-        this.opendPromise?.resolve(this.db);
+      if (db.objectStoreNames.contains(tableName)) {
         return;
       }
-
-      this.db = openDb.result;
-      let current = this.stores.keys();
-      let all = true;
-      let val = null;
-      while (!(val = current.next()).done && all) {
-        all = this.db.objectStoreNames.contains(val.value);
+      let table: IDBObjectStore;
+      if (store.primary.length > 0) {
+        table = db.createObjectStore(tableName, {
+          keyPath: store.primary.length === 1 ? store.primary[0] : store.primary,
+          autoIncrement: store.autoIncrement
+        });
+      }
+      else {
+        table = db.createObjectStore(tableName);
       }
 
-      if (all) {
-        this.opendPromise.resolve(this.db);
-      }
+      store.indexs.forEach((field, key) => {
+        table.createIndex(field.index, key, { unique: field.unique });
+      });
 
-    };
-    openDb.onerror = (exx) => {
-      this.opendPromise.reject(exx);
-    };
-
-    this.opendPromise.promise.finally(() => {
-      this.opendPromise = null;
     });
-    return this.opendPromise.promise;
   }
 
-  /**
-   * 升级时注册store
-   * */
-  private registorStore(openDb: IDBOpenDBRequest,) {
-    openDb.onupgradeneeded = (ev: IDBVersionChangeEvent) => {
+  private listenupgrade(openDb: IDBOpenDBRequest) {
+
+    openDb.onupgradeneeded = ev => {
       // @ts-ignore
       let db = ev.target.result;
 
-      this.stores.forEach((tableFields, tableName) => {
-
-        if (db.objectStoreNames.contains(tableName)) {
-          return;
-        }
-
-        let ops = this.primaryKeyMap.get(tableName);
-
-        const table = openDb.result.createObjectStore(tableName, {
-          keyPath: Array.isArray(ops.fieldName) ? ops.fieldName.length === 1 ? ops.fieldName[0] : ops.fieldName : ops.fieldName,
-          autoIncrement: ops.autoIncrement
-        });
-
-        tableFields.forEach((field, key) => {
-          if (field.index !== false) {
-            let index = typeof field.index === "string" ? field.index : key;
-            table.createIndex(index, key, { unique: field.unique });
-          }
-        });
-      });
+      this.create(db);
 
       if (this.db === null) {
         this.db = db;
       }
       else {
-        this.opendPromise?.resolve(db);
+        this.promise?.resolve(db);
+      }
+
+    };
+
+    openDb.onerror = ev => {
+      this.promise?.reject(ev);
+    };
+  }
+
+  private open(openDb: IDBOpenDBRequest) {
+    this.promise = requestPromise<IDBDatabase>();
+    openDb.onsuccess = () => {
+      if (this.db !== null) {
+        this.promise?.resolve(this.db);
+        return;
+      }
+      let db = this.db = openDb.result;
+
+
+      let current = this.stores.keys();
+      let all = true;
+      let val = null;
+      while (!(val = current.next()).done && all) {
+        all = db.objectStoreNames.contains(val.value);
+      }
+
+      if (all) {
+        this.promise.resolve(db);
       }
     };
+
     openDb.onerror = (exx) => {
-      console.log("err", exx);
-    }
+      this.promise.reject(exx);
+    };
+
+    this.promise.promise.finally(() => {
+      this.promise = null;
+    });
+
+    return this.promise.promise;
   }
+
+
+
 
   public async ensureInitialized() {
 
@@ -111,34 +120,15 @@ export class Database {
       return;
     }
 
-    let openDb: IDBOpenDBRequest = indexedDB.open(this.options.name, this.version);
-    this.registorStore(openDb);
-    await this.openDatabase(openDb);
+    let openDb: IDBOpenDBRequest = indexedDB.open(this.dbName, this.version);
+    this.listenupgrade(openDb);
+    await this.open(openDb);
 
     this.initialized = false;
   }
 
-  public registere(
-    tableName: string,
-    tableFields: Map<string, TableField>,
-    primary: PrimaryMapValue
-  ) {
-    this.stores.set(tableName, tableFields);
-    this.primaryKeyMap.set(tableName, primary);
+  public registere(tableName: string, store: DatabaseStore) {
+    this.stores.set(tableName, store);
   }
 
-
-  public setVersion(nextVersion: number) {
-
-  }
-
-
-
-  get version(): number {
-    return this.currentVersion;
-  }
-
-  // requestTransaction() {
-  //   return this.db.transaction;
-  // }
 }

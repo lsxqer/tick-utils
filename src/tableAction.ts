@@ -1,6 +1,11 @@
+/**
+ * 索引可以为空
+ * 可以分为动态表和存在主键的表
+ */
+
 import { Database } from "./database";
 import { Execable } from "./execable";
-import { TableField } from "./mapStore";
+import { DatabaseStore, TableField } from "./mapStore";
 import { SubscriberChannel, Subscrition } from "./subscriberChannel";
 import { requestPromise, wrapDbRequest } from "./uitls";
 import { nextTick } from "next-tick";
@@ -16,13 +21,14 @@ export type Types = StringConstructor |
 
 
 function validateType(
-  target: Map<string, TableField>,
+  target: Map<string, Types>,
   source: Record<string, any>
 ) {
 
   for (let [k, v] of Object.entries(source)) {
-    let type = target.get(k)?.type;
-    if (type !== undefined) {
+
+    if (target.has(k)) {
+      let type = target.get(k);
       if (!(v.__proto__ === type.prototype)) {
         return false;
       }
@@ -88,8 +94,9 @@ export class TableAction<T extends TableFields = TableFields> {
   // public primaryKey: GetTableFieldsKeys<T>;
   public primaryKeys: string[];
   public autoIncrement: boolean = false;
-  private tableMap: Map<GetTableFieldsKeys<T>, TableField>;
   private ctx: Execable;
+  private typeMaps: Map<GetTableFieldsKeys<T>, Types>;
+  private indexs: DatabaseStore["indexs"];
 
   // private onUpdated = new Subscrition();
   private onUpdated = new Map<string, SubscriberChannel | Map<string, SubscriberChannel>>();
@@ -98,11 +105,6 @@ export class TableAction<T extends TableFields = TableFields> {
   constructor(
     public readonly tableName: string,
 
-    /**
-     * 
-     * 
-     * 
-     */
     private readonly tableFields: T,
     private readonly database: Database
   ) {
@@ -111,16 +113,11 @@ export class TableAction<T extends TableFields = TableFields> {
 
 
   private getIndex(k: GetTableFieldsKeys<T>): string | null {
-    let i = this.tableMap.get(k).index;
+    if (this.indexs.has(k)) {
+      return this.indexs.get(k)!.index;
+    }
 
-    return typeof i === "string" ? i : i === true ? k as string : null;
-  }
-
-  /**
-   * @deprecated
-   */
-  private getPrimaryValue() {
-
+    return null;
   }
 
 
@@ -133,7 +130,9 @@ export class TableAction<T extends TableFields = TableFields> {
     let primaryKey: string[] = [];
     let autoIncrement: boolean = false;
 
-    const map = new Map<GetTableFieldsKeys<T>, TableField>();
+    const indexs = new Map() as DatabaseStore["indexs"];
+
+    const typeMaps = new Map<GetTableFieldsKeys<T>, Types>();
 
     for (let el of keys) {
       let val = fields[el];
@@ -144,29 +143,37 @@ export class TableAction<T extends TableFields = TableFields> {
         }
       }
 
-      map.set(el, {
-        ...val,
-        unique: val.unique ?? false,
-        index: val.index ?? true,
-      });
+      if (val.index !== false) {
+        indexs.set(el, {
+          index: val.index === true ? el : val.index,
+          unique: val.unique,
+        });
+      }
+
+      if (val.type !== undefined) {
+        typeMaps.set(el, val.type);
+      }
     }
 
     if (primaryKey.length === 0) {
       throw Error(`${tableName} is not exist primaryKey`);
     }
 
-    this.tableMap = map;
+    this.indexs = indexs;
+    this.typeMaps = typeMaps;
     this.primaryKeys = primaryKey as any;
     this.autoIncrement = autoIncrement;
     // todo: 注册时注意默认值
-    this.database.registere(this.tableName, map, {
-      fieldName: primaryKey,
-      autoIncrement
+    this.database.registere(tableName, {
+      primary: primaryKey,
+      autoIncrement: autoIncrement,
+      indexs: indexs,
     });
+
   }
 
 
-  protected hasInPrimary(obj: GetTableFields<T>) {
+  private hasInPrimary(obj: GetTableFields<T>) {
     if (!this.autoIncrement) {
       for (let k of this.primaryKeys) {
         if (obj[k] === undefined) {
@@ -178,7 +185,7 @@ export class TableAction<T extends TableFields = TableFields> {
   }
 
 
-  protected validatePrimaryValue(obj: GetTableFields<T>) {
+  private validatePrimaryValue(obj: GetTableFields<T>) {
 
     if (!this.autoIncrement) {
       for (let k of this.primaryKeys) {
@@ -420,7 +427,6 @@ export class TableAction<T extends TableFields = TableFields> {
   async has(id: IDBValidKey) {
     return this.ctx.execute<boolean>(async (store) => {
       let c = await wrapDbRequest(store.count(id));
-
       return c !== 0;
     });
   }
@@ -444,7 +450,7 @@ export class TableAction<T extends TableFields = TableFields> {
       throw Error("使用主键索引更新, next 必须存在主键");
     }
 
-    if (!validateType(this.tableMap, next)) {
+    if (!validateType(this.typeMaps, next)) {
       throw Error("type error");
     }
 
@@ -469,7 +475,7 @@ export class TableAction<T extends TableFields = TableFields> {
       throw Error("使用索引更新, next不能存在主键");
     }
 
-    if (!validateType(this.tableMap, next)) {
+    if (!validateType(this.typeMaps, next)) {
       throw Error("type error");
     }
 
@@ -585,7 +591,7 @@ export class TableAction<T extends TableFields = TableFields> {
    * 删除表
    */
   async drop() {
-    await this.database.db.deleteObjectStore(this.tableName);
+    this.database.db.deleteObjectStore(this.tableName);
     this.publishAllByNull();
   }
 
@@ -650,7 +656,7 @@ export class TableAction<T extends TableFields = TableFields> {
     if (!this.validatePrimaryValue(row)) {
       throw Error("value type error");
     }
-    if (!validateType(this.tableMap, row)) {
+    if (!validateType(this.typeMaps, row)) {
       throw Error("type error");
     }
 
@@ -823,5 +829,9 @@ export class TableAction<T extends TableFields = TableFields> {
 
   }
 
+  set(g: (store: IDBObjectStore) => void) {
+
+    this.ctx.execute(g);
+  }
 
 }
