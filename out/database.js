@@ -1,95 +1,90 @@
 import { requestPromise } from "./uitls";
 export class Database {
-    options;
-    currentVersion;
-    initialized = false;
-    primaryKeyMap = new Map();
+    /**
+     * tablename -> DatabaseStore
+     */
     stores = new Map();
+    initialized = false;
+    version;
+    dbName;
     db = null;
     constructor(options) {
-        this.options = options;
-        this.currentVersion = options.version;
+        this.dbName = options.name;
+        this.version = options.version;
     }
-    opendPromise = null;
-    /**
-     * 初始化打开数据库
-     */
-    openDatabase(openDb) {
-        this.opendPromise = requestPromise();
-        openDb.onsuccess = () => {
-            if (this.db !== null) {
-                this.opendPromise?.resolve(this.db);
+    promise = null;
+    create(db) {
+        this.stores.forEach((store, tableName) => {
+            if (db.objectStoreNames.contains(tableName)) {
                 return;
             }
-            this.db = openDb.result;
-            let current = this.stores.keys();
-            let all = true;
-            let val = null;
-            while (!(val = current.next()).done && all) {
-                all = this.db.objectStoreNames.contains(val.value);
+            let table;
+            if (store.primary.length > 0) {
+                table = db.createObjectStore(tableName, {
+                    keyPath: store.primary.length === 1 ? store.primary[0] : store.primary,
+                    autoIncrement: store.autoIncrement
+                });
             }
-            if (all) {
-                this.opendPromise.resolve(this.db);
+            else {
+                table = db.createObjectStore(tableName);
             }
-        };
-        openDb.onerror = (exx) => {
-            this.opendPromise.reject(exx);
-        };
-        this.opendPromise.promise.finally(() => {
-            this.opendPromise = null;
+            store.indexs.forEach((field, key) => {
+                table.createIndex(field.index, key, { unique: field.unique });
+            });
         });
-        return this.opendPromise.promise;
     }
-    /**
-     * 升级时注册store
-     * */
-    registorStore(openDb) {
-        openDb.onupgradeneeded = (ev) => {
+    listenupgrade(openDb) {
+        openDb.onupgradeneeded = ev => {
             // @ts-ignore
             let db = ev.target.result;
-            this.stores.forEach((tableFields, tableName) => {
-                if (db.objectStoreNames.contains(tableName)) {
-                    return;
-                }
-                let ops = this.primaryKeyMap.get(tableName);
-                const table = openDb.result.createObjectStore(tableName, {
-                    keyPath: Array.isArray(ops.fieldName) ? ops.fieldName.length === 1 ? ops.fieldName[0] : ops.fieldName : ops.fieldName,
-                    autoIncrement: ops.autoIncrement
-                });
-                tableFields.forEach((field, key) => {
-                    if (field.index !== false) {
-                        let index = typeof field.index === "string" ? field.index : key;
-                        table.createIndex(index, key, { unique: field.unique });
-                    }
-                });
-            });
+            this.create(db);
             if (this.db === null) {
                 this.db = db;
             }
             else {
-                this.opendPromise?.resolve(db);
+                this.promise?.resolve(db);
+            }
+        };
+        openDb.onerror = ev => {
+            this.promise?.reject(ev);
+        };
+    }
+    open(openDb) {
+        this.promise = requestPromise();
+        openDb.onsuccess = () => {
+            if (this.db !== null) {
+                this.promise?.resolve(this.db);
+                return;
+            }
+            let db = this.db = openDb.result;
+            let current = this.stores.keys();
+            let all = true;
+            let val = null;
+            while (!(val = current.next()).done && all) {
+                all = db.objectStoreNames.contains(val.value);
+            }
+            if (all) {
+                this.promise.resolve(db);
             }
         };
         openDb.onerror = (exx) => {
-            console.log("err", exx);
+            this.promise.reject(exx);
         };
+        this.promise.promise.finally(() => {
+            this.promise = null;
+        });
+        return this.promise.promise;
     }
     async ensureInitialized() {
         if (this.initialized) {
             return;
         }
-        let openDb = indexedDB.open(this.options.name, this.version);
-        this.registorStore(openDb);
-        await this.openDatabase(openDb);
+        let openDb = indexedDB.open(this.dbName, this.version);
+        this.listenupgrade(openDb);
+        await this.open(openDb);
         this.initialized = false;
     }
-    registere(tableName, tableFields, primary) {
-        this.stores.set(tableName, tableFields);
-        this.primaryKeyMap.set(tableName, primary);
-    }
-    setVersion(nextVersion) {
-    }
-    get version() {
-        return this.currentVersion;
+    registere(tableName, store) {
+        this.stores.set(tableName, store);
     }
 }

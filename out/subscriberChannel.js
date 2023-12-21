@@ -1,7 +1,22 @@
 export class SubscriberChannel {
+    static SubscriberChannelIndex = 1;
+    broadcastChannel;
+    channelKey;
+    constructor() {
+        this.channelKey = `SubscriberChannel:${SubscriberChannel.SubscriberChannelIndex}`;
+        this.broadcastChannel = new BroadcastChannel(this.channelKey);
+        this.broadcastChannel.addEventListener("message", (event) => {
+            let listeners = Array.from(this.subscribes);
+            listeners.forEach(listener => listener(event.data));
+        });
+    }
     subscribes = new Set();
     get size() {
         return this.subscribes.size;
+    }
+    close() {
+        this.broadcastChannel.close();
+        this.channelKey = this.broadcastChannel = null;
     }
     subscribe(listener) {
         this.subscribes.add(listener);
@@ -10,6 +25,7 @@ export class SubscriberChannel {
         };
     }
     publish(argv) {
+        this.broadcastChannel.postMessage(argv);
         let listeners = Array.from(this.subscribes);
         listeners.forEach(listener => listener(argv));
         return this;

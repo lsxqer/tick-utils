@@ -1,11 +1,15 @@
+/**
+ * 索引可以为空
+ * 可以分为动态表和存在主键的表
+ */
 import { Execable } from "./execable";
 import { SubscriberChannel } from "./subscriberChannel";
 import { wrapDbRequest } from "./uitls";
 import { nextTick } from "next-tick";
 function validateType(target, source) {
     for (let [k, v] of Object.entries(source)) {
-        let type = target.get(k)?.type;
-        if (type !== undefined) {
+        if (target.has(k)) {
+            let type = target.get(k);
             if (!(v.__proto__ === type.prototype)) {
                 return false;
             }
@@ -53,30 +57,22 @@ export class TableAction {
     // public primaryKey: GetTableFieldsKeys<T>;
     primaryKeys;
     autoIncrement = false;
-    tableMap;
     ctx;
+    typeMaps;
+    indexs;
     // private onUpdated = new Subscrition();
     onUpdated = new Map();
-    constructor(tableName, 
-    /**
-     *
-     *
-     *
-     */
-    tableFields, database) {
+    constructor(tableName, tableFields, database) {
         this.tableName = tableName;
         this.tableFields = tableFields;
         this.database = database;
         this.ctx = new Execable(database, tableName);
     }
     getIndex(k) {
-        let i = this.tableMap.get(k).index;
-        return typeof i === "string" ? i : i === true ? k : null;
-    }
-    /**
-     * @deprecated
-     */
-    getPrimaryValue() {
+        if (this.indexs.has(k)) {
+            return this.indexs.get(k).index;
+        }
+        return null;
     }
     initialize() {
         let tableName = this.tableName;
@@ -84,7 +80,8 @@ export class TableAction {
         let keys = Object.keys(fields);
         let primaryKey = [];
         let autoIncrement = false;
-        const map = new Map();
+        const indexs = new Map();
+        const typeMaps = new Map();
         for (let el of keys) {
             let val = fields[el];
             if (val.primaryKey === true) {
@@ -93,22 +90,28 @@ export class TableAction {
                     autoIncrement = val.autoIncrement;
                 }
             }
-            map.set(el, {
-                ...val,
-                unique: val.unique ?? false,
-                index: val.index ?? true,
-            });
+            if (val.index !== false) {
+                indexs.set(el, {
+                    index: val.index === true ? el : val.index,
+                    unique: val.unique,
+                });
+            }
+            if (val.type !== undefined) {
+                typeMaps.set(el, val.type);
+            }
         }
         if (primaryKey.length === 0) {
             throw Error(`${tableName} is not exist primaryKey`);
         }
-        this.tableMap = map;
+        this.indexs = indexs;
+        this.typeMaps = typeMaps;
         this.primaryKeys = primaryKey;
         this.autoIncrement = autoIncrement;
         // todo: 注册时注意默认值
-        this.database.registere(this.tableName, map, {
-            fieldName: primaryKey,
-            autoIncrement
+        this.database.registere(tableName, {
+            primary: primaryKey,
+            autoIncrement: autoIncrement,
+            indexs: indexs,
         });
     }
     hasInPrimary(obj) {
@@ -359,7 +362,7 @@ export class TableAction {
         if (!this.hasInPrimary(next)) {
             throw Error("使用主键索引更新, next 必须存在主键");
         }
-        if (!validateType(this.tableMap, next)) {
+        if (!validateType(this.typeMaps, next)) {
             throw Error("type error");
         }
         return this.ctx.execute((store) => {
@@ -379,7 +382,7 @@ export class TableAction {
         if (this.hasInPrimary(next)) {
             throw Error("使用索引更新, next不能存在主键");
         }
-        if (!validateType(this.tableMap, next)) {
+        if (!validateType(this.typeMaps, next)) {
             throw Error("type error");
         }
         return this.ctx.execute(store => {
@@ -477,16 +480,18 @@ export class TableAction {
      */
     async clear() {
         return this.ctx.execute(async (store) => {
-            await store.clear();
+            store.clear();
             this.publishAllByNull();
+            this.cleanSub();
         });
     }
     /**
      * 删除表
      */
     async drop() {
-        await this.database.db.deleteObjectStore(this.tableName);
+        this.database.db.deleteObjectStore(this.tableName);
         this.publishAllByNull();
+        this.cleanSub();
     }
     /**
      * 使用字段循环所有
@@ -541,7 +546,7 @@ export class TableAction {
         if (!this.validatePrimaryValue(row)) {
             throw Error("value type error");
         }
-        if (!validateType(this.tableMap, row)) {
+        if (!validateType(this.typeMaps, row)) {
             throw Error("type error");
         }
         return this.ctx.execute(async (store, u) => {
@@ -576,6 +581,13 @@ export class TableAction {
         return () => {
             un();
             if (ch.size === 0) {
+                let v = this.onUpdated.get(key);
+                if (v instanceof SubscriberChannel) {
+                    v.close();
+                }
+                else if (v instanceof Map) {
+                    Array.from(v.values()).forEach(p => p.close());
+                }
                 this.onUpdated.delete(key);
             }
         };
@@ -630,6 +642,22 @@ export class TableAction {
             }
         }
         pubs.forEach(p => p.publish(null));
+    }
+    cleanSub() {
+        nextTick(() => nextTick(() => nextTick(() => {
+            let pub = [];
+            this.onUpdated.forEach(v => {
+                if (v instanceof SubscriberChannel) {
+                    pub
+                        .push(v);
+                    return;
+                }
+                if (v instanceof Map) {
+                    pub = pub.concat(Array.from(v.values()));
+                }
+            });
+            pub.forEach(p => p.close());
+        })));
     }
     publishByPaths(keys, next) {
         let current = this.onUpdated;
@@ -687,5 +715,8 @@ export class TableAction {
         nextTick(() => {
             pub.publish(null);
         });
+    }
+    set(g) {
+        this.ctx.execute(g);
     }
 }

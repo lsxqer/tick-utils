@@ -6,8 +6,8 @@
 import { Database } from "./database";
 import { Execable } from "./execable";
 import { DatabaseStore, TableField } from "./mapStore";
-import { SubscriberChannel, Subscrition } from "./subscriberChannel";
-import { requestPromise, wrapDbRequest } from "./uitls";
+import { SubscriberChannel } from "./subscriberChannel";
+import { wrapDbRequest } from "./uitls";
 import { nextTick } from "next-tick";
 
 
@@ -582,8 +582,9 @@ export class TableAction<T extends TableFields = TableFields> {
    */
   async clear() {
     return this.ctx.execute(async (store) => {
-      await store.clear();
+      store.clear();
       this.publishAllByNull();
+      this.cleanSub();
     });
   }
 
@@ -593,6 +594,7 @@ export class TableAction<T extends TableFields = TableFields> {
   async drop() {
     this.database.db.deleteObjectStore(this.tableName);
     this.publishAllByNull();
+    this.cleanSub();
   }
 
   /**
@@ -700,6 +702,12 @@ export class TableAction<T extends TableFields = TableFields> {
     return () => {
       un();
       if (ch.size === 0) {
+        let v = this.onUpdated.get(key);
+        if (v instanceof SubscriberChannel) {
+          v.close();
+        } else if (v instanceof Map) {
+          Array.from(v.values()).forEach(p => p.close());
+        }
         this.onUpdated.delete(key);
       }
     };
@@ -761,6 +769,23 @@ export class TableAction<T extends TableFields = TableFields> {
       }
     }
     pubs.forEach(p => p.publish(null));
+  }
+
+  private cleanSub() {
+    nextTick(() => nextTick(() => nextTick(() => {
+      let pub = [] as SubscriberChannel[];
+      this.onUpdated.forEach(v => {
+        if (v instanceof SubscriberChannel) {
+          pub
+            .push(v);
+          return;
+        }
+        if (v instanceof Map) {
+          pub = pub.concat(Array.from(v.values()));
+        }
+      });
+      pub.forEach(p => p.close());
+    })))
   }
 
   private publishByPaths(keys: string[], next: unknown) {

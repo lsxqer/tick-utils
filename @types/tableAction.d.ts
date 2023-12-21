@@ -1,3 +1,7 @@
+/**
+ * 索引可以为空
+ * 可以分为动态表和存在主键的表
+ */
 import { Database } from "./database";
 import { TableField } from "./mapStore";
 export type Types = StringConstructor | BooleanConstructor | NumberConstructor | DateConstructor | ArrayConstructor | ObjectConstructor;
@@ -10,33 +14,19 @@ type GetTableFields<T extends TableFields> = {
 type GetTableFieldsKeys<T extends TableFields> = keyof T extends string ? keyof T : never;
 export declare class TableAction<T extends TableFields = TableFields> {
     readonly tableName: string;
-    /**
-     *
-     *
-     *
-     */
     private readonly tableFields;
     private readonly database;
     primaryKeys: string[];
     autoIncrement: boolean;
-    private tableMap;
     private ctx;
+    private typeMaps;
+    private indexs;
     private onUpdated;
-    constructor(tableName: string, 
-    /**
-     *
-     *
-     *
-     */
-    tableFields: T, database: Database);
+    constructor(tableName: string, tableFields: T, database: Database);
     private getIndex;
-    /**
-     * @deprecated
-     */
-    private getPrimaryValue;
     protected initialize(): void;
-    protected hasInPrimary(obj: GetTableFields<T>): boolean;
-    protected validatePrimaryValue(obj: GetTableFields<T>): boolean;
+    private hasInPrimary;
+    private validatePrimaryValue;
     /**
      * 获取当前存储库下所有的
      */
@@ -137,6 +127,7 @@ export declare class TableAction<T extends TableFields = TableFields> {
      */
     onUpdateByValue<V = any>(val: string, callback: (value: V) => void): () => void;
     private publishAllByNull;
+    private cleanSub;
     private publishByPaths;
     /**
      * 变化以后内部通知
@@ -144,5 +135,6 @@ export declare class TableAction<T extends TableFields = TableFields> {
     private publishByIndex;
     private publishAll;
     notify(key: GetTableFieldsKeys<T>): void;
+    set(g: (store: IDBObjectStore) => void): void;
 }
 export {};

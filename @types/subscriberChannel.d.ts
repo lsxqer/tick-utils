@@ -1,6 +1,11 @@
 export declare class SubscriberChannel {
+    static SubscriberChannelIndex: number;
+    private broadcastChannel;
+    private channelKey;
+    constructor();
     private subscribes;
     get size(): number;
+    close(): void;
     subscribe<T = any>(listener: (argv: T) => void): () => void;
     publish<T = any>(argv: T): this;
 }
